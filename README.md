@@ -1,70 +1,43 @@
 📊 Trading Journal
 
-A clean and simple trading journal designed to help traders track their trades, analyse performance, and improve decision making over time.
+A clean and simple trading journal designed to help traders track their trades, analyze performance, and improve decision making over time.
 
-🚀 Overview
+Features
 
-This application allows traders to record their trades, monitor profit and loss, and gain insights into their trading behaviour. It focuses on simplicity, clarity, and usability so users can concentrate on improving their strategy.
+Add and manage trades
 
-✨ Features
+Track profit and loss
 
-Record and manage trades
+View trade history
 
-Track profit and loss (P&L)
+Calendar view of trades
 
-View trade history in a structured format
+Responsive interface
 
-Calendar style view of trading activity
-
-Clean and responsive user interface
-
-Persistent data storage
-
-⚙️ App Management
-
-The app provides simple tools to help users manage their trading data effectively.
+App Management
 
 Recently Deleted
-Restore trades that were accidentally removed before they are permanently deleted
 
-Export Trades (CSV)
-Export your trade history as a CSV file for backup or external analysis
+Export trades as CSV
 
-Import Trades (CSV)
-Import previously exported trades or data from other sources
+Import trades from CSV
 
-Wipe All Data
-Clear all stored data and reset the application to its initial state
+Wipe all data
 
-📱 Screens
+Screenshots
 
-Dashboard with trade summary
+Add screenshots below
 
-Trade entry form
-
-Trade history view
-
-🛠️ Tech Stack
+![Dashboard](ss/dashboard.jpeg)
+![Add Trade](ss/logtrade.jpeg)
+![Journal](ss/journal.jpeg)
+![Settings](ss/settings.jpeg)
+Tech Stack
 
 Flutter
 
 Dart
 
-Local storage / offline based
+Note
 
-📂 Project Structure
-lib/
-
-├── core/           # app configuration, themes, constants
-├── models/         # data models (trade, user, etc.)
-├── providers/      # state management logic
-├── screens/        # UI screens
-├── widgets/        # reusable components
-
-🤝 Contributing
-
-Contributions are welcome. Feel free to fork the repository and submit a pull request.
-
-💡 Note
-
-This project is built for learning and practical use. Always combine tools like this with proper risk management when trading.
+Built for tracking trades. Use alongside proper risk management.
