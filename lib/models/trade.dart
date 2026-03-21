@@ -11,7 +11,8 @@ class Trade {
   final double exitPrice;
   final double quantity;
   final DateTime date;
-  final String notes; // User-defined context/tags
+  final String notes; // Why user took the trade
+  final String lessons; // What user learned from the trade
   final String? imagePath; // Path to attached chart screenshot
 
   Trade({
@@ -23,6 +24,7 @@ class Trade {
     required this.quantity,
     required this.date,
     this.notes = '',
+    this.lessons = '',
     this.imagePath,
   }) : id = id ?? const Uuid().v4();
 
@@ -48,6 +50,7 @@ class Trade {
       'quantity': quantity,
       'date': date.toIso8601String(),
       'notes': notes,
+      'lessons': lessons,
       'imagePath': imagePath,
     };
   }
@@ -62,6 +65,7 @@ class Trade {
       quantity: (map['quantity'] as num).toDouble(),
       date: DateTime.parse(map['date']),
       notes: map['notes'] ?? '',
+      lessons: map['lessons'] ?? '',
       imagePath: map['imagePath'],
     );
   }
