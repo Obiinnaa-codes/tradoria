@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:csv/csv.dart';
 import '../models/trade.dart';
 
 /// App state manager responsible for executing read/write storage ops.
@@ -14,17 +17,12 @@ class TradeProvider with ChangeNotifier {
   // Tracks if storage is currently being fetched
   bool _isLoading = true;
 
-  // Manual capital input for ROI calculation
-  double _initialCapital = 0.0;
-
   // Track recently deleted trades for recovery
   List<Trade> _deletedTrades = [];
-
 
   List<Trade> get trades => _trades;
   List<Trade> get deletedTrades => _deletedTrades;
   bool get isLoading => _isLoading;
-  double get initialCapital => _initialCapital;
 
   TradeProvider() {
     loadTrades(); // Trigger initialization of local storage
@@ -37,28 +35,34 @@ class TradeProvider with ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final List<String>? tradesJson = prefs.getStringList('trades');
       final List<String>? deletedJson = prefs.getStringList('deleted_trades');
-      _initialCapital = prefs.getDouble('capital') ?? 0.0;
 
       if (tradesJson != null) {
-        _trades = tradesJson.map((jsonStr) {
-          try {
-            return Trade.fromJson(jsonStr);
-          } catch (e) {
-            debugPrint('Failed to parse a trade entry: $e');
-            return null;
-          }
-        }).whereType<Trade>().toList();
+        _trades = tradesJson
+            .map((jsonStr) {
+              try {
+                return Trade.fromJson(jsonStr);
+              } catch (e) {
+                debugPrint('Failed to parse a trade entry: $e');
+                return null;
+              }
+            })
+            .whereType<Trade>()
+            .toList();
+        _sanitizeTrades(); // Remove any corrupt duplicates from storage
         _trades.sort((a, b) => b.date.compareTo(a.date));
       }
 
       if (deletedJson != null) {
-        _deletedTrades = deletedJson.map((jsonStr) {
-          try {
-            return Trade.fromJson(jsonStr);
-          } catch (e) {
-            return null;
-          }
-        }).whereType<Trade>().toList();
+        _deletedTrades = deletedJson
+            .map((jsonStr) {
+              try {
+                return Trade.fromJson(jsonStr);
+              } catch (e) {
+                return null;
+              }
+            })
+            .whereType<Trade>()
+            .toList();
       }
     } catch (e) {
       debugPrint('Error loading trades: $e');
@@ -69,11 +73,14 @@ class TradeProvider with ChangeNotifier {
   }
 
   /// Appends a newly created trade to memory and persists to the device.
-  Future<void> addTrade(Trade trade) async {
-    _trades.add(trade);
-    _trades.sort((a, b) => b.date.compareTo(a.date));
-    await _saveTrades();
+  Future<void> addTrade(Trade trade) {
+    // Safety check: Don't add if already exists in active trades
+    if (_trades.any((t) => t.id == trade.id)) return Future.value();
+
+    _trades.insert(0, trade);
+    _saveTrades();
     notifyListeners();
+    return Future.value();
   }
 
   /// Updates an existing trade in memory and storage.
@@ -93,7 +100,8 @@ class TradeProvider with ChangeNotifier {
     if (tradeIndex != -1) {
       final trade = _trades[tradeIndex];
       _deletedTrades.insert(0, trade);
-      if (_deletedTrades.length > 20) _deletedTrades.removeLast(); // Keep only 20
+      if (_deletedTrades.length > 20)
+        _deletedTrades.removeLast(); // Keep only 20
       _trades.removeAt(tradeIndex);
       await _saveTrades();
       notifyListeners();
@@ -123,28 +131,31 @@ class TradeProvider with ChangeNotifier {
     if (_isLoading) return; // Guard against overwriting during boot-up load
 
     try {
+      _sanitizeTrades(); // Final check before writing to disk
       final prefs = await SharedPreferences.getInstance();
       final List<String> tradesJson = _trades.map((t) => t.toJson()).toList();
-      final List<String> deletedJson = _deletedTrades.map((t) => t.toJson()).toList();
+      final List<String> deletedJson = _deletedTrades
+          .map((t) => t.toJson())
+          .toList();
       await prefs.setStringList('trades', tradesJson);
       await prefs.setStringList('deleted_trades', deletedJson);
-      await prefs.setDouble('capital', _initialCapital);
     } catch (e) {
       debugPrint('Error saving trades to local storage: $e');
     }
   }
 
-  /// Updates starting capital and persists
-  Future<void> setCapital(double value) async {
-    _initialCapital = value;
-    await _saveTrades();
-    notifyListeners();
+  /// Internal helper to ensure every trade in the list has a unique ID.
+  /// This prevents 'Duplicate Key' crashes in the UI.
+  void _sanitizeTrades() {
+    final ids = <String>{};
+    _trades.retainWhere((trade) => ids.add(trade.id));
+
+    final deletedIds = <String>{};
+    _deletedTrades.retainWhere((trade) => deletedIds.add(trade.id));
   }
 
-  /// Wipes all logged data - irreversible
   Future<void> clearAllData() async {
     _trades.clear();
-    _initialCapital = 0.0;
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     notifyListeners();
@@ -167,12 +178,6 @@ class TradeProvider with ChangeNotifier {
   double get winRate {
     if (_trades.isEmpty) return 0.0;
     return (totalWins / totalTrades) * 100;
-  }
-
-  /// Portfolio Growth % based on initial capital
-  double get roi {
-    if (_initialCapital <= 0) return 0.0;
-    return (totalNetProfit / _initialCapital) * 100;
   }
 
   /// Advanced Analytics Data Map
@@ -220,9 +225,9 @@ class TradeProvider with ChangeNotifier {
   /// Filters trades by symbol for search functionality
   List<Trade> searchTrades(String query) {
     if (query.isEmpty) return _trades;
-    return _trades.where((t) => 
-      t.symbol.toLowerCase().contains(query.toLowerCase())
-    ).toList();
+    return _trades
+        .where((t) => t.symbol.toLowerCase().contains(query.toLowerCase()))
+        .toList();
   }
 
   /// Generates a CSV file from current trades and triggers system share sheet.
@@ -243,7 +248,7 @@ class TradeProvider with ChangeNotifier {
           '${t.exitPrice},'
           '${t.quantity},'
           '${t.profitLoss.toStringAsFixed(2)},'
-          '"${t.notes.replaceAll('\n', ' ')}"'
+          '"${t.notes.replaceAll('\n', ' ')}"',
         );
       }
 
@@ -252,9 +257,219 @@ class TradeProvider with ChangeNotifier {
       final file = File(path);
       await file.writeAsString(csv.toString());
 
-      await Share.shareXFiles([XFile(path)], text: 'My Tradoria Trade Journal Export');
+      await Share.shareXFiles([
+        XFile(path),
+      ], text: 'My Tradoria Trade Journal Export');
     } catch (e) {
       debugPrint('Export error: $e');
+    }
+  }
+
+  /// Allows user to pick a CSV file and import trades into the application.
+  ///
+  /// Returns:
+  /// - [true] if at least one trade was successfully parsed and added.
+  /// - [false] if the file was selected but no valid trades could be extracted.
+  /// - [null] if the selection was aborted by the user.
+  Future<bool?> importTradesFromCSV() async {
+    try {
+      // 1. Pick file from device storage
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv'],
+        withData: true, // Ensuring we get bytes if available
+      );
+
+      if (result == null ||
+          result.files.single.path == null &&
+              result.files.single.bytes == null) {
+        debugPrint('CSV Import: User cancelled or selection empty.');
+        return null;
+      }
+
+      String content;
+      if (result.files.single.bytes != null) {
+        // Prefer memory-efficient bytes if already available from picker
+        content = utf8.decode(result.files.single.bytes!, allowMalformed: true);
+      } else {
+        // Fallback to local file path
+        final file = File(result.files.single.path!);
+        final bytes = await file.readAsBytes();
+        content = utf8.decode(bytes, allowMalformed: true);
+      }
+
+      // 2. Initial parse to detect character content
+      if (content.trim().isEmpty) {
+        debugPrint('CSV Import: File is empty.');
+        return false;
+      }
+
+      // TRACE: See what we are actually getting from the file
+      debugPrint(
+        '[DEBUG] CONTENT PREVIEW: ${content.substring(0, content.length > 100 ? 100 : content.length).replaceAll('\n', '[LF]').replaceAll('\r', '[CR]')}',
+      );
+
+      // 3. Normalize Line Endings (\r\n or \r -> \n)
+      // This ensures the CSV parser doesn't treat the whole file as one row.
+      content = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
+      // 4. Delimiter Auto-Detection (Check for comma, semicolon, or tab)
+      String delimiter = ',';
+      final cleanedLines = content
+          .split('\n')
+          .where((l) => l.trim().isNotEmpty)
+          .toList();
+      if (cleanedLines.isEmpty) return false;
+
+      final firstLine = cleanedLines.first;
+      if (firstLine.contains(';')) {
+        delimiter = ';';
+      } else if (firstLine.contains('\t'))
+        delimiter = '\t';
+
+      debugPrint(
+        'CSV Import: Using delimiter "$delimiter" on ${cleanedLines.length} raw lines',
+      );
+
+      final fields = CsvToListConverter(
+        fieldDelimiter: delimiter,
+        eol: '\n', // We normalized to \n above
+        shouldParseNumbers: true,
+      ).convert(content);
+
+      debugPrint('CSV Import Parser: Found ${fields.length} rows.');
+
+      if (fields.isEmpty) {
+        debugPrint('CSV Import: Not a valid CSV structure.');
+        return false;
+      }
+
+      int importedCount = 0;
+      int duplicateCount = 0;
+      int skipCount = 0;
+
+      // 4. Process data rows
+      for (int i = 0; i < fields.length; i++) {
+        final row = fields[i];
+
+        // Skip headers or empty rows
+        final rowString = row.toString().toLowerCase();
+        if (rowString.contains('symbol') ||
+            rowString.contains('date') ||
+            rowString.isEmpty) {
+          debugPrint('CSV Import: Skipping index $i (likely header or empty).');
+          continue;
+        }
+
+        // We require at least some data. We'll be flexible on count.
+        if (row.length < 2) {
+          debugPrint(
+            'CSV Import: Row $i skipped (only ${row.length} columns found). Content: $row',
+          );
+          skipCount++;
+          continue;
+        }
+
+        try {
+          String rawDate = row[0]?.toString().trim() ?? '';
+          DateTime? parsedDate = DateTime.tryParse(rawDate);
+
+          // Fallback parsing for common human formats (MM/DD/YYYY or DD/MM/YYYY)
+          if (parsedDate == null && rawDate.contains('/')) {
+            final parts = rawDate
+                .split(' ')[0]
+                .split('/'); // Handle "DATE TIME" string
+            if (parts.length == 3) {
+              int? p1 = int.tryParse(parts[0]);
+              int? p2 = int.tryParse(parts[1]);
+              int? p3 = int.tryParse(parts[2]);
+              if (p1 != null && p2 != null && p3 != null) {
+                // Try YYYY/MM/DD or MM/DD/YYYY
+                if (p1 > 1000)
+                  parsedDate = DateTime.tryParse(
+                    '$p1-${p2.toString().padLeft(2, '0')}-${p3.toString().padLeft(2, '0')}',
+                  );
+                else {
+                  // Assume MM/DD/YYYY
+                  parsedDate = DateTime.tryParse(
+                    '$p3-${p1.toString().padLeft(2, '0')}-${p2.toString().padLeft(2, '0')}',
+                  );
+                }
+              }
+            }
+          }
+
+          if (parsedDate == null) {
+            debugPrint(
+              'CSV Import: Row $i skipped (unsupported date format: $rawDate)',
+            );
+            skipCount++;
+            continue;
+          }
+
+          final rawSymbol = row.length > 1
+              ? row[1]?.toString() ?? 'UKN'
+              : 'UKN';
+          final rawType = row.length > 2
+              ? row[2]?.toString() ?? 'Long'
+              : 'Long';
+          final rawEntry = row.length > 3 ? row[3]?.toString() ?? '0' : '0';
+
+          final trade = Trade(
+            date: parsedDate,
+            symbol: rawSymbol.trim().toUpperCase(),
+            type: rawType.trim().toLowerCase().contains('short')
+                ? 'Short'
+                : 'Long',
+            entryPrice: double.tryParse(rawEntry.toString()) ?? 0.0,
+            exitPrice: row.length > 4
+                ? (double.tryParse(row[4].toString()) ?? 0.0)
+                : 0.0,
+            quantity: row.length > 5
+                ? (double.tryParse(row[5].toString()) ?? 0.0)
+                : 0.0,
+            notes: row.length > 7 ? row[7].toString().trim() : '',
+          );
+
+          // CONTENT-BASED DEDUPLICATION:
+          // We check exact timestamp and symbol to be sure it's the exact same trade.
+          final isDuplicate = _trades.any(
+            (t) =>
+                t.symbol == trade.symbol &&
+                t.date.isAtSameMomentAs(trade.date) &&
+                t.entryPrice == trade.entryPrice,
+          );
+
+          if (!isDuplicate) {
+            _trades.add(trade);
+            importedCount++;
+          } else {
+            duplicateCount++;
+          }
+        } catch (e) {
+          debugPrint('CSV Import: Error on Row $i: $e');
+          skipCount++;
+        }
+      }
+
+      // 5. Finalize and notify
+      debugPrint(
+        'CSV Import Summary: $importedCount new, $duplicateCount duplicates, $skipCount skipped.',
+      );
+
+      if (importedCount > 0) {
+        _sanitizeTrades();
+        _trades.sort((a, b) => b.date.compareTo(a.date));
+        await _saveTrades();
+        notifyListeners();
+      }
+
+      // Return true if we actually found and processed at least one valid row
+      // (even if it was a duplicate), so the user knows the file was readable.
+      return (importedCount > 0 || duplicateCount > 0);
+    } catch (e) {
+      debugPrint('CSV Import Crash: $e');
+      return false;
     }
   }
 }
